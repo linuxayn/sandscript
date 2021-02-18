@@ -1,0 +1,166 @@
+<!doctype html>
+<html>
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title></title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.1/css/bulma.min.css">
+  <link rel="stylesheet"
+    href="https://cdn.jsdelivr.net/npm/@creativebulma/bulma-tooltip@1.2.0/dist/bulma-tooltip.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/github-markdown-css@4.0.0/github-markdown.min.css">
+  <link rel="stylesheet"
+    href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@10.5.0/build/styles/atom-one-dark.min.css">
+
+  <script src="https://cdn.jsdelivr.net/npm/jquery@3.5.1/dist/jquery.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@10.5.0/build/highlight.min.js"></script>
+  <style>
+    .markdown-body a {
+      color: #3273dc;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="container is-max-desktop">
+    <section class="mt-1">
+      <pre class="px-0 py-0"><code id="node_log" class="diff" style="height: 5.2em; overflow-y: auto;"></code></pre>
+    </section>
+
+    <section>
+      <div class="columns mt-1">
+        <div id="app" class="column"></div>
+      </div>
+    </section>
+
+  </div>
+
+  <script>
+    // 使用utf-8字符集进行base64编码
+    function utoa(str) {
+      return btoa(unescape(encodeURIComponent(str)))
+    }
+    // 使用utf-8字符集解码base64字符串 
+    function atou(str) {
+      return decodeURIComponent(escape(atob(str)))
+    }
+
+    // 解析来自服务端的指令
+    function parseCommand(str) {
+      let parts = str.split("\t");
+      let command = parts[0];
+      let nodeId = parts[1];
+      let dataMap = new Map();
+      if (parts.length == 3) {
+        let tokens = parts[2].split(" ");
+        if (tokens.length % 2 == 0) {
+          for (let i = 0; i < tokens.length / 2; ++i) {
+            dataMap.set(tokens[2 * i].trim(), atou(tokens[2 * i + 1].trim()));
+          }
+        }
+      }
+      console.log("command=", command, " id=", nodeId, "data=", dataMap)
+      return { command: command.trim(), nodeId: nodeId.trim(), data: dataMap }
+    }
+
+    // 生成指令，data为map数据接口
+    function makeCommand(command, nodeId, data) {
+      let dataStr = ""
+      for (var [key, value] of data) {
+        dataStr += key + " " + utoa(value) + " "
+      }
+      let line = command + '\t' + nodeId + '\t' + dataStr.trim()
+      return line
+    }
+
+    // 自动聚焦在ele下的第一个输入控件
+    function autoFocus(ele) {
+      let firstInput = ele.find("input,textarea,select,radio,select").first()
+      if (firstInput != null) {
+        firstInput.focus()
+      }
+    }
+
+    // 以动画的方式移除本元素
+    function removeElement(ele) {
+      ele.animate({ height: 0, opacity: 0 }, 200, function () { this.remove() });
+    }
+
+    let host = window.location.host
+    let service = window.location.pathname.split('/')[1]
+    var ws = new WebSocket("ws://" + host + "/" + service)
+    var app = $("#app")
+
+    ws.onopen = function (evt) { }
+
+    ws.onmessage = function (evt) {
+      let command = parseCommand(evt.data)
+      let nodeId = command.nodeId
+      if (command.command == "set" || command.command == "append" || command.command == "delete") {
+        if ($("#node_" + nodeId).length <= 0) {
+          let node_div = document.createElement("div")
+          node_div.id = "node_" + nodeId
+          $(node_div).addClass("my-3")
+          app.append(node_div)
+        }
+        let ele = $("#node_" + nodeId)
+        switch (command.command) {
+          case "delete": removeElement(ele); break;
+          case "set":
+            if (command.data.has("html")) {
+              ele.html(command.data.get("html"))
+            }
+            if (command.data.has("expired")) {
+              let expired = parseInt(command.data.get("expired")) * 1000
+              setTimeout(function () { removeElement(ele) }, expired)
+            }
+            if (command.data.has("progress")) {
+              let value = command.data.get("progress")
+              let first = ele.find("progress").first()
+              if (first != null) {
+                first.attr("value", value)
+              }
+            }
+            break;
+          case "append":
+            ele.append(command.data.get("html")); break;
+        }
+        autoFocus(ele)
+      } else if (command.command == "attr") {
+        if (command.data.get("title") != null) {
+          let newTitle = command.data.get("title")
+          $(document).attr("title", newTitle)
+        }
+      } else if (command.command == "log") {
+        $("#node_log").append("<br/>" + command.data.get("message"))
+        $("#node_log").scrollTop(function () { return this.scrollHeight; })
+        hljs.highlightBlock($("#node_log")[0])
+      }
+    } // end onmessage
+
+    ws.onclose = function (evt) { }
+
+    // 提交表单值
+    $("#app").on("submit", function (e) {
+      e.preventDefault()
+      let form = e.target
+      let div = $(form).parents("div[id^='node_']")[0]
+      let nodeId = div.id.split('_')[1]
+      let myMap = new Map()
+      for (const v of $(form).serializeArray()) {
+        if (myMap.has(v.name)) {
+          // for multiselect only
+          myMap.set(v.name, myMap.get(v.name) + "," + v.value)
+        } else {
+          myMap.set(v.name, v.value)
+        }
+      }
+      let commandStr = makeCommand("set", nodeId, myMap)
+      console.log(commandStr)
+      ws.send(commandStr)
+    })
+
+  </script>
+</body>
+
+</html>
